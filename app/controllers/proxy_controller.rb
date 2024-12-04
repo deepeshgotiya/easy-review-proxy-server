@@ -11,22 +11,18 @@ class ProxyController < ApplicationController
       render json: { error: 'URL parameter is required' }, status: :bad_request
       return
     end
-
+  
     begin
       uri = URI.parse(url)
       response = Net::HTTP.get_response(uri)
       
       doc = Nokogiri::HTML(response.body)
-      
-      css_links = doc.css('link[rel="stylesheet"]').map { |link| 
+
+      css_links = doc.css('link[rel="stylesheet"]').map do |link| 
         href = link['href']
-        if href.start_with?('http')
-          href
-        else
-          URI.join(url, href).to_s
-        end
-      }
-      
+        href.start_with?('http') ? href : URI.join(url, href).to_s
+      end
+  
       css_contents = css_links.map do |css_url|
         begin
           css_uri = URI.parse(css_url)
@@ -36,13 +32,23 @@ class ProxyController < ApplicationController
           nil
         end
       end.compact
-
+  
+      doc.css('img').each do |img|
+        src = img['src']&.strip
+        next if src.nil? || src.empty?
+        img['src'] = URI.join(url, src).to_s unless src.start_with?('http', '//')
+      rescue URI::InvalidURIError => e
+        Rails.logger.warn("Invalid URI for image src: #{src}, error: #{e.message}")
+        next
+      end
+      
+      
       headers['Access-Control-Allow-Origin'] = '*'
       headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
       headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept'
       
       render json: {
-        html: response.body,
+        html: doc.to_html,
         css: css_contents
       }
     rescue URI::InvalidURIError
@@ -51,4 +57,5 @@ class ProxyController < ApplicationController
       render json: { error: "Failed to fetch URL: #{e.message}" }, status: :internal_server_error
     end
   end
+  
 end
